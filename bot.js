@@ -284,6 +284,7 @@
 
   // 5. Seguir usuario
   async function followUser(user) {
+    updateCounters();
     try {
       // Verificar límites
       if (STATE.dailyCounter >= CONFIG.MAX_FOLLOWS_PER_DAY) {
@@ -351,11 +352,13 @@
       
       logMessage(`❌ Failed @${user.username}`, 'error');
       STATE.failed.push(user);
+      updateCounters();
       return { success: false, reason: 'api_error' };
       
     } catch (error) {
       logMessage(`⚠️ Error @${user.username}: ${error.message}`, 'error');
       STATE.failed.push(user);
+      updateCounters();
       return { success: false, reason: 'exception' };
     }
   }
@@ -436,6 +439,7 @@
     
     // Aplicar aleatoriedad
     STATE.pendingToFollow = shuffleArray(STATE.pendingToFollow);
+    updateCounters();
     
     updateUI({
       progress: 100,
@@ -449,6 +453,7 @@
   }
 
   async function startFollowing() {
+    updateCounters();
     if (STATE.pendingToFollow.length === 0) {
       logMessage('No users to follow!', 'warning');
       return;
@@ -603,20 +608,28 @@
         </div>
       </div>
       
-      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 15px;">
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 15px;">
         <div style="background: rgba(34, 197, 94, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #86efac;">Total</div>
           <div id="totalCount" style="font-size: 16px; font-weight: bold; color: #22c55e;">0</div>
         </div>
+      
         <div style="background: rgba(59, 130, 246, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #93c5fd;">Pending</div>
           <div id="pendingCount" style="font-size: 16px; font-weight: bold; color: #3b82f6;">0</div>
         </div>
+      
+        <div style="background: rgba(34, 211, 238, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
+          <div style="font-size: 10px; color: #67e8f9;">Done</div>
+          <div id="doneCount" style="font-size: 16px; font-weight: bold; color: #06b6d4;">0</div>
+        </div>
+      
         <div style="background: rgba(239, 68, 68, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #fca5a5;">Failed</div>
           <div id="failedCount" style="font-size: 16px; font-weight: bold; color: #ef4444;">0</div>
         </div>
       </div>
+
       
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
         <button id="startBtn" style="padding: 10px; background: #10b981; 
@@ -734,6 +747,13 @@
     if (!STATE.csrfToken) {
       alert('Please log in to Instagram first');
       return;
+    }
+      
+    function updateCounters() {
+      document.getElementById('totalCount').innerText = STATE.scannedFollowers.length;
+      document.getElementById('pendingCount').innerText = STATE.pendingToFollow.length;
+      document.getElementById('doneCount').innerText = STATE.completed.length;
+      document.getElementById('failedCount').innerText = STATE.failed.length;
     }
     
     createUI();
