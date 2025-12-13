@@ -27,8 +27,8 @@
     scannedFollowers: [],
     alreadyFollowing: [],
     pendingToFollow: [],
-    completed: [],
-    failed: [],
+    completed: [],    // ✅ FOLLOWS EXITOSOS
+    failed: [],       // ❌ FOLLOWS FALLADOS
     skipped: [],
     dailyCounter: 0,
     hourlyCounter: 0,
@@ -37,7 +37,35 @@
     targetUserId: null
   };
 
-  // ========== FUNCIONES ACTUALIZADAS ==========
+  // ========== FUNCIONES AUXILIARES ==========
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  // ========== FUNCIÓN NUEVA: updateCounters() ==========
+  function updateCounters() {
+    // Actualizar TODOS los contadores en la UI
+    const totalEl = document.getElementById('totalCount');
+    const pendingEl = document.getElementById('pendingCount');
+    const doneEl = document.getElementById('doneCount');
+    const failedEl = document.getElementById('failedCount');
+    
+    if (totalEl) totalEl.textContent = STATE.scannedFollowers.length;
+    if (pendingEl) pendingEl.textContent = STATE.pendingToFollow.length;
+    if (doneEl) doneEl.textContent = STATE.completed.length;      // ✅ CONTADOR DE EXITOSOS
+    if (failedEl) failedEl.textContent = STATE.failed.length;      // ❌ CONTADOR DE FALLADOS
+  }
+
+  // ========== FUNCIONES DE LA APP ==========
 
   // 1. Obtener CSRF token
   function getCsrfToken() {
@@ -49,12 +77,11 @@
     return token || '';
   }
 
-  // 2. Método ALTERNATIVO para obtener User ID - SIN API
+  // 2. Método ALTERNATIVO para obtener User ID
   async function getTargetUserIdAlternative(username) {
     try {
       console.log(`🔍 Attempting to get user ID for @${username}...`);
       
-      // Método 1: Intentar cargar la página del perfil
       const response = await fetch(`https://www.instagram.com/${username}/`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -81,33 +108,15 @@
 
       const html = await response.text();
       
-      // Buscar el ID en el HTML de varias maneras
       const patterns = [
-        // Patrón 1: "profilePage_"
         /"profilePage_([0-9]+)"/,
-        
-        // Patrón 2: window._sharedData
         /window\._sharedData\s*=\s*({.*?});/,
-        
-        // Patrón 3: data-reactid con ID
         /"id":"([0-9]+)".*?"username":"[^"]*"/,
-        
-        // Patrón 4: GraphQL data
         /"user_id":"([0-9]+)"/,
-        
-        // Patrón 5: Enlace de perfil
         /"profile_id":"([0-9]+)"/,
-        
-        // Patrón 6: Instagram ID
         /"instagram_id":"([0-9]+)"/,
-        
-        // Patrón 7: En meta tags
         /<meta[^>]*content="instagram:\/\/user\?username=[^&]+&id=([0-9]+)"[^>]*>/,
-        
-        // Patrón 8: En JSON-LD
         /"@type":"Person".*?"identifier":"([0-9]+)"/,
-        
-        // Patrón 9: En scripts
         /"id"\s*:\s*"([0-9]+)".*?"username"\s*:\s*"[^"]*"/s
       ];
 
@@ -119,26 +128,6 @@
         }
       }
 
-      // Método alternativo: Buscar en window si estamos en la página
-      if (window.location.pathname === `/${username}/`) {
-        // Intentar extraer de datos globales
-        if (window._sharedData) {
-          try {
-            const entryData = window._sharedData.entry_data;
-            if (entryData && entryData.ProfilePage) {
-              const userData = entryData.ProfilePage[0]?.graphql?.user;
-              if (userData && userData.id) {
-                console.log(`✅ Found user ID from window._sharedData: ${userData.id}`);
-                return userData.id;
-              }
-            }
-          } catch (e) {
-            console.warn('Error parsing window._sharedData:', e);
-          }
-        }
-      }
-
-      console.warn('❌ Could not find user ID in page');
       return null;
 
     } catch (error) {
@@ -147,27 +136,24 @@
     }
   }
 
-  // 3. Obtener seguidores usando método DIRECTO
+  // 3. Obtener seguidores
   async function fetchFollowersDirect(username) {
     try {
       console.log(`📥 Fetching followers for @${username}...`);
       
-      // Primero intentar obtener el ID
       STATE.targetUserId = await getTargetUserIdAlternative(username);
       if (!STATE.targetUserId) {
         throw new Error('User ID not found. Account may be private or non-existent.');
       }
 
-      // Usar el endpoint de seguidores directamente
       let allFollowers = [];
       let after = null;
       let page = 0;
-      const maxPages = 20; // Límite para no hacer demasiadas requests
+      const maxPages = 20;
 
       while (page < maxPages) {
         page++;
         
-        // Construir URL para GraphQL
         const queryHash = "c76146de99bb02f6415203be841dd25a";
         const variables = {
           id: STATE.targetUserId,
@@ -237,11 +223,8 @@
         }
         
         after = pageInfo.end_cursor;
-        
-        // Pequeña pausa entre requests
         await sleep(2000 + Math.random() * 3000);
         
-        // Mostrar progreso
         logMessage(`📊 Page ${page}: ${followers.length} followers (Total: ${allFollowers.length})`, 'info');
         updateUI({
           found: allFollowers.length,
@@ -282,9 +265,8 @@
     }
   }
 
-  // 5. Seguir usuario
+  // 5. Seguir usuario - CON CONTEO MEJORADO
   async function followUser(user) {
-    updateCounters();
     try {
       // Verificar límites
       if (STATE.dailyCounter >= CONFIG.MAX_FOLLOWS_PER_DAY) {
@@ -303,6 +285,7 @@
         logMessage(`✓ Already following @${user.username}`, 'info');
         STATE.alreadyFollowing.push(user);
         STATE.pendingToFollow = STATE.pendingToFollow.filter(u => u.id !== user.id);
+        updateCounters();  // ✅ ACTUALIZAR CONTADORES
         return { success: true, alreadyFollowing: true };
       }
 
@@ -339,6 +322,7 @@
         const result = await response.json();
         
         if (result.status === 'ok' || result.friendship_status?.following) {
+          // ✅ FOLLOW EXITOSO
           STATE.dailyCounter++;
           STATE.hourlyCounter++;
           STATE.lastFollowTime = Date.now();
@@ -346,35 +330,23 @@
           STATE.pendingToFollow = STATE.pendingToFollow.filter(u => u.id !== user.id);
           
           logMessage(`✅ Followed @${user.username}`, 'success');
+          updateCounters();  // ✅ ACTUALIZAR CONTADORES DESPUÉS DE ÉXITO
           return { success: true };
         }
       }
       
+      // ❌ FOLLOW FALLADO
       logMessage(`❌ Failed @${user.username}`, 'error');
       STATE.failed.push(user);
-      updateCounters();
+      updateCounters();  // ✅ ACTUALIZAR CONTADORES DESPUÉS DE FALLO
       return { success: false, reason: 'api_error' };
       
     } catch (error) {
       logMessage(`⚠️ Error @${user.username}: ${error.message}`, 'error');
       STATE.failed.push(user);
-      updateCounters();
+      updateCounters();  // ✅ ACTUALIZAR CONTADORES DESPUÉS DE ERROR
       return { success: false, reason: 'exception' };
     }
-  }
-
-  // 6. Funciones auxiliares
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  function shuffleArray(array) {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
   }
 
   // ========== LÓGICA PRINCIPAL ==========
@@ -389,26 +361,26 @@
     updateStatus('Scanning...', '#3b82f6');
     logMessage(`🎯 Scanning @${username}`, 'info');
     
+    // RESETAR TODOS LOS ESTADOS
     STATE.scannedFollowers = [];
     STATE.alreadyFollowing = [];
     STATE.pendingToFollow = [];
+    STATE.completed = [];
+    STATE.failed = [];
     
-    // Obtener seguidores usando método directo
+    // Obtener seguidores
     const followers = await fetchFollowersDirect(username);
     
     if (followers.length === 0) {
       updateStatus('No followers found', '#ef4444');
-      logMessage('Could not fetch followers. Possible reasons:', 'error');
-      logMessage('1. Account is private', 'error');
-      logMessage('2. Instagram blocked the request', 'error');
-      logMessage('3. User does not exist', 'error');
+      logMessage('Could not fetch followers.', 'error');
       STATE.status = 'idle';
       return;
     }
     
     STATE.scannedFollowers = followers;
     
-    // Verificar cuáles ya seguimos (más rápido, en lotes)
+    // Verificar cuáles ya seguimos
     updateStatus('Checking follows...', '#3b82f6');
     const batchSize = 5;
     
@@ -439,7 +411,7 @@
     
     // Aplicar aleatoriedad
     STATE.pendingToFollow = shuffleArray(STATE.pendingToFollow);
-    updateCounters();
+    updateCounters();  // ✅ ACTUALIZAR CONTADORES DESPUÉS DEL SCAN
     
     updateUI({
       progress: 100,
@@ -453,7 +425,6 @@
   }
 
   async function startFollowing() {
-    updateCounters();
     if (STATE.pendingToFollow.length === 0) {
       logMessage('No users to follow!', 'warning');
       return;
@@ -461,13 +432,13 @@
     
     STATE.status = 'following';
     updateStatus('Starting...', '#10b981');
+    updateCounters();  // ✅ ACTUALIZAR CONTADORES AL INICIAR
     
     let batchNumber = 0;
     
     while (STATE.pendingToFollow.length > 0 && STATE.status === 'following') {
       batchNumber++;
       
-      // Determinar tamaño de batch
       const batchSize = CONFIG.FOLLOW_BATCH_SIZE + 
                        Math.floor(Math.random() * (CONFIG.BATCH_SIZE_VARIATION * 2 + 1)) - 
                        CONFIG.BATCH_SIZE_VARIATION;
@@ -475,7 +446,6 @@
       const actualBatchSize = Math.max(1, Math.min(5, batchSize));
       const actualBatchSizeFinal = Math.min(actualBatchSize, STATE.pendingToFollow.length);
       
-      // Tomar batch
       const batch = STATE.pendingToFollow.slice(0, actualBatchSizeFinal);
       
       logMessage(`🔄 Batch #${batchNumber}: ${actualBatchSizeFinal} users`, 'info');
@@ -484,14 +454,11 @@
       for (const user of batch) {
         if (STATE.status !== 'following') break;
         
-        await followUser(user);
+        await followUser(user);  // Esta función ya llama a updateCounters()
         
+        // También actualizar UI para progreso
         updateUI({
           pending: STATE.pendingToFollow.length,
-          completed: STATE.completed.length,
-          failed: STATE.failed.length,
-          daily: STATE.dailyCounter,
-          hourly: STATE.hourlyCounter,
           progress: Math.round((STATE.completed.length / STATE.scannedFollowers.length) * 100)
         });
       }
@@ -506,7 +473,6 @@
         logMessage(`⏸️ Next batch in ${batchDelayMinutes}m`, 'info');
         updateStatus(`Next in ${batchDelayMinutes}m`);
         
-        // Cuenta regresiva
         const startTime = Date.now();
         const interval = setInterval(() => {
           if (STATE.status !== 'following') {
@@ -536,13 +502,14 @@
     
     if (STATE.pendingToFollow.length === 0) {
       updateStatus('✅ Done!', '#22c55e');
-      logMessage(`🎉 Completed: ${STATE.completed.length} followed, ${STATE.failed.length} failed`, 'success');
+      logMessage(`🎉 Completed: ${STATE.completed.length} followed successfully, ${STATE.failed.length} failed`, 'success');
+      updateCounters();  // ✅ ACTUALIZAR CONTADORES FINALES
     }
     
     STATE.status = 'idle';
   }
 
-  // ========== UI SIMPLIFICADA ==========
+  // ========== UI FUNCTIONS ==========
   function createUI() {
     const existingUI = document.getElementById('follow-bot-ui');
     if (existingUI) existingUI.remove();
@@ -553,7 +520,7 @@
       position: fixed;
       top: 20px;
       right: 20px;
-      width: 340px;
+      width: 350px;
       max-height: 500px;
       background: rgba(15, 23, 42, 0.98);
       color: white;
@@ -573,7 +540,7 @@
           🔄 Instagram Follower Bot
         </h3>
         <div style="font-size: 11px; color: #9ca3af;">
-          Fixed version • No API required
+          Enhanced version • Shows all stats
         </div>
       </div>
       
@@ -608,29 +575,31 @@
         </div>
       </div>
       
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 15px;">
+      <!-- 4 CONTADORES EN UNA FILA -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 15px;">
+        <!-- TOTAL -->
         <div style="background: rgba(34, 197, 94, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #86efac;">Total</div>
           <div id="totalCount" style="font-size: 16px; font-weight: bold; color: #22c55e;">0</div>
         </div>
-      
+        <!-- PENDIENTES -->
         <div style="background: rgba(59, 130, 246, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #93c5fd;">Pending</div>
           <div id="pendingCount" style="font-size: 16px; font-weight: bold; color: #3b82f6;">0</div>
         </div>
-      
+        <!-- EXITOSOS (DONE) -->
         <div style="background: rgba(34, 211, 238, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #67e8f9;">Done</div>
           <div id="doneCount" style="font-size: 16px; font-weight: bold; color: #06b6d4;">0</div>
         </div>
-      
+        <!-- FALLADOS -->
         <div style="background: rgba(239, 68, 68, 0.1); padding: 8px; border-radius: 6px; text-align: center;">
           <div style="font-size: 10px; color: #fca5a5;">Failed</div>
           <div id="failedCount" style="font-size: 16px; font-weight: bold; color: #ef4444;">0</div>
         </div>
       </div>
-
       
+      <!-- BOTONES DE CONTROL -->
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
         <button id="startBtn" style="padding: 10px; background: #10b981; 
                 color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">
@@ -642,16 +611,20 @@
         </button>
       </div>
       
+      <!-- CONFIGURACIÓN -->
       <div style="font-size: 11px; color: #9ca3af; margin-bottom: 10px; padding: 8px; background: rgba(30, 41, 59, 0.5); border-radius: 6px;">
         <div>⚡ Follow delay: ${CONFIG.DELAY_BETWEEN_FOLLOWS.min/60000}-${CONFIG.DELAY_BETWEEN_FOLLOWS.max/60000} min</div>
         <div>⏸️ Batch delay: ${CONFIG.DELAY_BETWEEN_BATCHES.min/60000}-${CONFIG.DELAY_BETWEEN_BATCHES.max/60000} min</div>
+        <div>🎯 Daily limit: ${CONFIG.MAX_FOLLOWS_PER_DAY} follows/day</div>
       </div>
       
+      <!-- LOG DE ACTIVIDAD -->
       <div id="logContainer" style="height: 100px; overflow-y: auto; background: rgba(15, 23, 42, 0.8); 
             border-radius: 6px; padding: 10px; margin-bottom: 10px;">
         <div id="log" style="color: #d1d5db; font-size: 11px;"></div>
       </div>
       
+      <!-- BOTÓN STOP -->
       <div style="text-align: center;">
         <button id="stopBtn" style="padding: 6px 12px; background: rgba(239, 68, 68, 0.2); 
                 color: #fca5a5; border: 1px solid #f87171; border-radius: 4px; cursor: pointer; font-size: 11px;">
@@ -673,21 +646,20 @@
   }
 
   function updateUI(data) {
+    // Actualizar todos los contadores
     if (data.found !== undefined) {
       document.getElementById('totalCount').textContent = data.found;
     }
     if (data.pending !== undefined) {
       document.getElementById('pendingCount').textContent = data.pending;
     }
+    // Nota: doneCount se actualiza con updateCounters()
     if (data.failed !== undefined) {
       document.getElementById('failedCount').textContent = data.failed;
     }
     if (data.progress !== undefined) {
       document.getElementById('progressBar').style.width = `${data.progress}%`;
       document.getElementById('progressText').textContent = `${data.progress}%`;
-    }
-    if (data.daily !== undefined) {
-      // No hay elemento para daily en esta UI
     }
   }
 
@@ -732,6 +704,8 @@
       STATE.status = 'idle';
       updateStatus('Stopped', '#ef4444');
       logMessage('Process stopped', 'error');
+      updateCounters();  // ✅ ACTUALIZAR CONTADORES AL DETENER
+      logMessage(`📊 Final stats: ${STATE.completed.length} successful, ${STATE.failed.length} failed`, 'info');
     });
   }
 
@@ -748,20 +722,15 @@
       alert('Please log in to Instagram first');
       return;
     }
-      
-    function updateCounters() {
-      document.getElementById('totalCount').innerText = STATE.scannedFollowers.length;
-      document.getElementById('pendingCount').innerText = STATE.pendingToFollow.length;
-      document.getElementById('doneCount').innerText = STATE.completed.length;
-      document.getElementById('failedCount').innerText = STATE.failed.length;
-    }
     
     createUI();
     logMessage('🔄 Instagram Follower Bot initialized', 'success');
-    logMessage('⚡ Using alternative method (no API)', 'info');
+    logMessage('📊 Shows: Total, Pending, Done, Failed', 'info');
     logMessage('⚠️ Enter username and click Scan', 'warning');
+    updateCounters();  // ✅ INICIALIZAR CONTADORES A CERO
   }
 
+  // Iniciar cuando el DOM esté listo
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize);
   } else {
