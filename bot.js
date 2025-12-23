@@ -3,8 +3,8 @@
 
   // ========== CONFIGURACIÓN ACTUALIZADA ==========
   const CONFIG = {
-    FOLLOW_BATCH_SIZE: 8,
-    BATCH_SIZE_VARIATION: 2,
+    FOLLOW_BATCH_SIZE: 10,
+    BATCH_SIZE_VARIATION: 4,
     DELAY_BETWEEN_FOLLOWS: {
       min: 120000,  // 2 minutos
       max: 240000   // 4 minutos
@@ -14,7 +14,7 @@
       max: 600000   // 10 minutos
     },
     MAX_FOLLOWS_PER_DAY: 100,
-    MAX_FOLLOWS_PER_HOUR: 20,
+    MAX_FOLLOWS_PER_HOUR: 50,
     RANDOMIZE_ORDER: true,
     SHUFFLE_EVERY_BATCH: true,
     SKIP_PERCENTAGE: 10,
