@@ -13,7 +13,7 @@
       min: 300000,  // 5 minutos
       max: 600000   // 10 minutos
     },
-    MAX_FOLLOWS_PER_DAY: 100,
+    MAX_FOLLOWS_PER_DAY: 300,
     MAX_FOLLOWS_PER_HOUR: 50,
     RANDOMIZE_ORDER: true,
     SHUFFLE_EVERY_BATCH: true,
