@@ -305,7 +305,7 @@
       const formData = new FormData();
       formData.append('user_id', user.id);
       
-      const response = await fetch(`https://www.instagram.com/api/v1/web/friendships/${user.id}/follow/`, {
+      const response = await fetch(`https://www.instagram.com/web/friendships/${user.id}/follow/`, {
         method: 'POST',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
