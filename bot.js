@@ -186,7 +186,7 @@
           id: edge.node.id,
           username: edge.node.username,
           full_name: edge.node.full_name,
-          followed_by_viewer: edge.node.followed_by_viewer // El API suele entregar esto de forma nativa
+          followed_by_viewer: edge.node.followed_by_viewer
         }));
 
         allFollowers = [...allFollowers, ...followers];
@@ -212,34 +212,7 @@
     }
   }
 
-  // Corregido con cabeceras requeridas por API v1 para evitar Error 400
-  async function checkIfFollowing(userId) {
-    try {
-      const response = await fetch(`https://www.instagram.com/api/v1/friendships/show/${userId}/`, {
-        headers: {
-          'User-Agent': window.navigator.userAgent,
-          'Accept': '*/*',
-          'X-IG-App-ID': '936619743392459',
-          'X-CSRFToken': STATE.csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'X-Instagram-AJAX': '1'
-        },
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        // Si sigue tirando error 400, asumimos falso por seguridad para no romper la cola
-        return false; 
-      }
-      
-      const data = await response.json();
-      return data.following || false;
-    } catch (error) {
-      console.warn('Error checking follow status:', error);
-      return false;
-    }
-  }
-
+  // Actualizado al Endpoint API v1 Correcto para realizar Follow (Evita el Error 404)
   async function followUser(user) {
     try {
       if (STATE.dailyCounter >= CONFIG.MAX_FOLLOWS_PER_DAY) {
@@ -252,7 +225,6 @@
         return { success: false, reason: 'hourly_limit' };
       }
 
-      // Delay aleatorio estricto para simular comportamiento humano
       const delay = CONFIG.DELAY_BETWEEN_FOLLOWS.min + 
                     Math.random() * (CONFIG.DELAY_BETWEEN_FOLLOWS.max - CONFIG.DELAY_BETWEEN_FOLLOWS.min);
       
@@ -264,18 +236,22 @@
         await sleep(delay);
       }
 
-      const formData = new FormData();
-      formData.append('user_id', user.id);
-      
-      const response = await fetch(`https://www.instagram.com/web/friendships/${user.id}/follow/`, {
+      // El nuevo endpoint requiere los datos serializados en x-www-form-urlencoded nativo
+      const params = new URLSearchParams();
+      params.append('user_id', user.id);
+
+      const response = await fetch(`https://www.instagram.com/api/v1/friendships/create/${user.id}/`, {
         method: 'POST',
         headers: {
           'User-Agent': window.navigator.userAgent,
+          'Accept': '*/*',
+          'Content-Type': 'application/x-www-form-urlencoded',
           'X-IG-App-ID': '936619743392459',
           'X-CSRFToken': STATE.csrfToken,
-          'X-Requested-With': 'XMLHttpRequest'
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-Instagram-AJAX': '1'
         },
-        body: formData,
+        body: params.toString(),
         credentials: 'include'
       });
 
@@ -294,7 +270,7 @@
         }
       }
       
-      logMessage(`❌ Failed or blocked @${user.username}`, 'error');
+      logMessage(`❌ Failed or blocked @${user.username} (Status: ${response.status})`, 'error');
       STATE.failed.push(user);
       updateCounters();
       return { success: false, reason: 'api_error' };
@@ -307,7 +283,7 @@
     }
   }
 
-  // ========== LÓGICA PRINCIPAL (OPTIMIZADA) ==========
+  // ========== LÓGICA PRINCIPAL ==========
   async function scanFollowers() {
     const username = document.getElementById('targetUsername').value.trim().replace('@', '');
     if (!username) {
@@ -337,7 +313,6 @@
     STATE.scannedFollowers = followers;
     updateStatus('Processing users...', '#3b82f6');
     
-    // Optimizacion radical: Evitamos las llamadas 400/429 procesando la data de GraphQL
     followers.forEach((follower) => {
       if (follower.followed_by_viewer === true) {
         STATE.alreadyFollowing.push(follower);
@@ -360,7 +335,7 @@
     });
     
     updateStatus('Ready!', '#22c55e');
-    logMessage(`📊 Scan complete: ${STATE.scannedFollowers.length} total. ${STATE.pendingToFollow.length} users ready to filter/follow.`, 'success');
+    logMessage(`📊 Scan complete: ${STATE.scannedFollowers.length} total. ${STATE.pendingToFollow.length} users ready.`, 'success');
   }
 
   async function startFollowing() {
@@ -391,7 +366,6 @@
       for (const user of batch) {
         if (STATE.status !== 'following') break;
         
-        // Ejecutamos followUser directamente
         await followUser(user);
         
         updateUI({
@@ -454,7 +428,7 @@
     overlay.innerHTML = `
       <div style="margin-bottom: 15px;">
         <h3 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 16px;">🔄 Instagram Follower Bot</h3>
-        <div style="font-size: 11px; color: #9ca3af;">Fixed Version • No 400 Error</div>
+        <div style="font-size: 11px; color: #9ca3af;">Fixed Version • API v1 Create</div>
       </div>
       <div style="margin-bottom: 15px;">
         <div style="display: flex; gap: 10px;">
