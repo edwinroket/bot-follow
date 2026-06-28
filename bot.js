@@ -27,14 +27,17 @@
     scannedFollowers: [],
     alreadyFollowing: [],
     pendingToFollow: [],
-    completed: [],    // ✅ FOLLOWS EXITOSOS
-    failed: [],       // ❌ FOLLOWS FALLADOS
+    completed: [],    
+    failed: [],       
     skipped: [],
     dailyCounter: 0,
     hourlyCounter: 0,
     lastFollowTime: null,
     csrfToken: "",
-    targetUserId: null
+    targetUserId: null,
+    currentQueryHashIndex: 0,
+    // Lista de Hashes oficiales para paginación de seguidores (se rotan si uno falla)
+    queryHashes: ["c76146de99bb02f6415203be841dd25a", "e4623e756814ac975ee0f334aa24e740"]
   };
 
   // ========== FUNCIONES AUXILIARES ==========
@@ -135,12 +138,12 @@
       let allFollowers = [];
       let after = null;
       let page = 0;
-      const maxPages = 20;
+      const maxPages = 40; 
 
       while (page < maxPages) {
         page++;
         
-        const queryHash = "c76146de99bb02f6415203be841dd25a";
+        const queryHash = STATE.queryHashes[STATE.currentQueryHashIndex];
         const variables = {
           id: STATE.targetUserId,
           include_reel: false,
@@ -151,7 +154,7 @@
         if (after) variables.after = after;
 
         const url = `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(JSON.stringify(variables))}`;
-        console.log(`📄 Fetching page ${page}...`);
+        console.log(`📄 Fetching page ${page} using hash: ${queryHash.substring(0,6)}...`);
         
         const response = await fetch(url, {
           headers: {
@@ -166,13 +169,31 @@
         });
 
         if (!response.ok) {
-          console.warn(`Response status: ${response.status}`);
+          logMessage(`⚠️ HTTP Error ${response.status} on page ${page}`, 'warning');
           if (response.status === 429) {
-            console.warn('Rate limited! Waiting 1 minute...');
-            await sleep(60000);
+            logMessage('⏳ Rate limited by Instagram. Waiting 90 seconds...', 'warning');
+            await sleep(90000);
             continue;
           }
           break;
+        }
+
+        // CONTROL CRÍTICO: Validar que la respuesta sea JSON real y no HTML estructurado (DOCTYPE)
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          console.warn("❌ Instagram returned HTML instead of JSON. Changing query hash...");
+          logMessage("⚠️ Token hash expired or restricted. Attempting fallback hash...", "warning");
+          
+          // Rotar al siguiente hash disponible e intentar la misma pagina de nuevo
+          if (STATE.currentQueryHashIndex < STATE.queryHashes.length - 1) {
+            STATE.currentQueryHashIndex++;
+            page--; // Reintentar este mismo índice de página
+            await sleep(3000);
+            continue;
+          } else {
+            logMessage("❌ Instagram block active: Soft Rate Limit. Please wait a few minutes before scanning again.", "error");
+            break;
+          }
         }
 
         const data = await response.json();
@@ -195,24 +216,27 @@
         if (!pageInfo.has_next_page || !pageInfo.end_cursor) break;
         
         after = pageInfo.end_cursor;
-        await sleep(2000 + Math.random() * 3000);
         
-        logMessage(`📊 Page ${page}: ${followers.length} followers (Total: ${allFollowers.length})`, 'info');
+        // Retraso incremental dinámico por página para no alertar al firewall
+        const dynamicDelay = 3000 + (page * 200) + (Math.random() * 3000);
+        await sleep(dynamicDelay);
+        
+        logMessage(`📊 Page ${page}: +${followers.length} followers (Total parsed: ${allFollowers.length})`, 'info');
         updateUI({
           found: allFollowers.length,
           progress: Math.min(95, Math.round((page / maxPages) * 100))
         });
       }
 
-      console.log(`✅ Total followers fetched: ${allFollowers.length}`);
+      console.log(`✅ Total followers fetched successfully: ${allFollowers.length}`);
       return allFollowers;
     } catch (error) {
       console.error('Error in fetchFollowersDirect:', error);
+      logMessage(`⚠️ Scanning interrupted: ${error.message}`, 'error');
       return [];
     }
   }
 
-  // Actualizado al Endpoint API v1 Correcto para realizar Follow (Evita el Error 404)
   async function followUser(user) {
     try {
       if (STATE.dailyCounter >= CONFIG.MAX_FOLLOWS_PER_DAY) {
@@ -236,7 +260,6 @@
         await sleep(delay);
       }
 
-      // El nuevo endpoint requiere los datos serializados en x-www-form-urlencoded nativo
       const params = new URLSearchParams();
       params.append('user_id', user.id);
 
@@ -270,7 +293,7 @@
         }
       }
       
-      logMessage(`❌ Failed or blocked @${user.username} (Status: ${response.status})`, 'error');
+      logMessage(`❌ Failed @${user.username} (Status: ${response.status})`, 'error');
       STATE.failed.push(user);
       updateCounters();
       return { success: false, reason: 'api_error' };
@@ -292,6 +315,7 @@
     }
 
     STATE.status = 'scanning';
+    STATE.currentQueryHashIndex = 0; // Resetear índice de hash
     updateStatus('Scanning...', '#3b82f6');
     logMessage(`🎯 Scanning @${username}`, 'info');
     
@@ -304,8 +328,8 @@
     const followers = await fetchFollowersDirect(username);
     
     if (followers.length === 0) {
-      updateStatus('No followers found', '#ef4444');
-      logMessage('Could not fetch followers.', 'error');
+      updateStatus('Scan stopped/Empty', '#ef4444');
+      logMessage('No active followers retrieved. Try refreshing your Instagram page.', 'error');
       STATE.status = 'idle';
       return;
     }
@@ -335,7 +359,7 @@
     });
     
     updateStatus('Ready!', '#22c55e');
-    logMessage(`📊 Scan complete: ${STATE.scannedFollowers.length} total. ${STATE.pendingToFollow.length} users ready.`, 'success');
+    logMessage(`📊 Scan complete: ${STATE.scannedFollowers.length} total. ${STATE.pendingToFollow.length} users queued.`, 'success');
   }
 
   async function startFollowing() {
@@ -428,7 +452,7 @@
     overlay.innerHTML = `
       <div style="margin-bottom: 15px;">
         <h3 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 16px;">🔄 Instagram Follower Bot</h3>
-        <div style="font-size: 11px; color: #9ca3af;">Fixed Version • API v1 Create</div>
+        <div style="font-size: 11px; color: #9ca3af;">Anti-Crash Edition • Auto Hash Rotation</div>
       </div>
       <div style="margin-bottom: 15px;">
         <div style="display: flex; gap: 10px;">
@@ -473,10 +497,6 @@
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
         <button id="startBtn" style="padding: 10px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">▶ Start</button>
         <button id="pauseBtn" style="padding: 10px; background: #f59e0b; color: black; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">⏸ Pause</button>
-      </div>
-      <div style="font-size: 11px; color: #9ca3af; margin-bottom: 10px; padding: 8px; background: rgba(30, 41, 59, 0.5); border-radius: 6px;">
-        <div>⚡ Follow delay: ${CONFIG.DELAY_BETWEEN_FOLLOWS.min/60000}-${CONFIG.DELAY_BETWEEN_FOLLOWS.max/60000} min</div>
-        <div>⏸️ Batch delay: ${CONFIG.DELAY_BETWEEN_BATCHES.min/60000}-${CONFIG.DELAY_BETWEEN_BATCHES.max/60000} min</div>
       </div>
       <div id="logContainer" style="height: 100px; overflow-y: auto; background: rgba(15, 23, 42, 0.8); border-radius: 6px; padding: 10px; margin-bottom: 10px;">
         <div id="log" style="color: #d1d5db; font-size: 11px;"></div>
