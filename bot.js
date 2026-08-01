@@ -1,23 +1,23 @@
 (() => {
   "use strict";
 
-  // ========== CONFIGURACIÓN ACTUALIZADA ==========
+  // ========== CONFIGURACIÓN ANTI-BAN (ULTRA SEGURA) ==========
   const CONFIG = {
-    FOLLOW_BATCH_SIZE: 10,
-    BATCH_SIZE_VARIATION: 4,
+    FOLLOW_BATCH_SIZE: 3,         // Lotes pequeños (3 a 5 acciones continuas)
+    BATCH_SIZE_VARIATION: 2,
     DELAY_BETWEEN_FOLLOWS: {
-      min: 120000,  // 2 minutos
-      max: 240000   // 4 minutos
+      min: 240000,  // 4 minutos mínimo entre acciones
+      max: 600000   // 10 minutos máximo entre acciones
     },
     DELAY_BETWEEN_BATCHES: {
-      min: 300000,  // 5 minutos
-      max: 600000   // 10 minutos
+      min: 1800000, // 30 minutos de descanso entre lotes
+      max: 3600000  // 60 minutos de descanso entre lotes
     },
-    MAX_FOLLOWS_PER_DAY: 300,
-    MAX_FOLLOWS_PER_HOUR: 50,
+    MAX_FOLLOWS_PER_DAY: 80,      // Límite diario seguro para cuentas normales
+    MAX_FOLLOWS_PER_HOUR: 10,     // Límite por hora muy conservador
     RANDOMIZE_ORDER: true,
     SHUFFLE_EVERY_BATCH: true,
-    SKIP_PERCENTAGE: 10,
+    SKIP_PERCENTAGE: 20,          // 20% de probabilidad de ignorar a un usuario aleatoriamente
     SAVE_PROGRESS: false
   };
 
@@ -28,7 +28,7 @@
     alreadyFollowing: [],
     pendingToFollow: [],
     completed: [],    
-    failed: [],       
+    failed: [],        
     skipped: [],
     dailyCounter: 0,
     hourlyCounter: 0,
@@ -36,13 +36,17 @@
     csrfToken: "",
     targetUserId: null,
     currentQueryHashIndex: 0,
-    // Lista de Hashes oficiales para paginación de seguidores (se rotan si uno falla)
     queryHashes: ["c76146de99bb02f6415203be841dd25a", "e4623e756814ac975ee0f334aa24e740"]
   };
 
-  // ========== FUNCIONES AUXILIARES ==========
+  // ========== FUNCIONES AUXILIARES Y SIMULACIÓN HUMANA ==========
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function getRandomJitter() {
+    // Añade entre 5 y 25 segundos aleatorios extra para romper patrones numéricos fijos
+    return Math.floor(Math.random() * 20000) + 5000;
   }
 
   function shuffleArray(array) {
@@ -138,7 +142,7 @@
       let allFollowers = [];
       let after = null;
       let page = 0;
-      const maxPages = 40; 
+      const maxPages = 20; // Reducido a 20 páginas para evitar scraping agresivo
 
       while (page < maxPages) {
         page++;
@@ -171,27 +175,25 @@
         if (!response.ok) {
           logMessage(`⚠️ HTTP Error ${response.status} on page ${page}`, 'warning');
           if (response.status === 429) {
-            logMessage('⏳ Rate limited by Instagram. Waiting 90 seconds...', 'warning');
-            await sleep(90000);
+            logMessage('⏳ Rate limited by Instagram. Waiting 5 minutes...', 'warning');
+            await sleep(300000); // Espera extendida a 5 minutos si hay 429
             continue;
           }
           break;
         }
 
-        // CONTROL CRÍTICO: Validar que la respuesta sea JSON real y no HTML estructurado (DOCTYPE)
         const contentType = response.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
           console.warn("❌ Instagram returned HTML instead of JSON. Changing query hash...");
           logMessage("⚠️ Token hash expired or restricted. Attempting fallback hash...", "warning");
           
-          // Rotar al siguiente hash disponible e intentar la misma pagina de nuevo
           if (STATE.currentQueryHashIndex < STATE.queryHashes.length - 1) {
             STATE.currentQueryHashIndex++;
-            page--; // Reintentar este mismo índice de página
-            await sleep(3000);
+            page--;
+            await sleep(5000);
             continue;
           } else {
-            logMessage("❌ Instagram block active: Soft Rate Limit. Please wait a few minutes before scanning again.", "error");
+            logMessage("❌ Instagram block active: Soft Rate Limit. Please wait before scanning again.", "error");
             break;
           }
         }
@@ -217,8 +219,8 @@
         
         after = pageInfo.end_cursor;
         
-        // Retraso incremental dinámico por página para no alertar al firewall
-        const dynamicDelay = 3000 + (page * 200) + (Math.random() * 3000);
+        // Retraso entre peticiones de escaneo (más lento para no alertar al firewall)
+        const dynamicDelay = 5000 + (page * 300) + getRandomJitter();
         await sleep(dynamicDelay);
         
         logMessage(`📊 Page ${page}: +${followers.length} followers (Total parsed: ${allFollowers.length})`, 'info');
@@ -239,6 +241,15 @@
 
   async function followUser(user) {
     try {
+      // 1. Simulación Humana: Saltar usuarios con un porcentaje aleatorio
+      if (Math.random() * 100 < CONFIG.SKIP_PERCENTAGE) {
+        logMessage(`⏭️ Skipped @${user.username} (Human behavior simulation)`, 'info');
+        STATE.skipped.push(user);
+        STATE.pendingToFollow = STATE.pendingToFollow.filter(u => u.id !== user.id);
+        return { success: false, reason: 'skipped' };
+      }
+
+      // 2. Control de límites
       if (STATE.dailyCounter >= CONFIG.MAX_FOLLOWS_PER_DAY) {
         logMessage(`⚠️ Daily limit reached (${CONFIG.MAX_FOLLOWS_PER_DAY})`, 'warning');
         return { success: false, reason: 'daily_limit' };
@@ -249,8 +260,10 @@
         return { success: false, reason: 'hourly_limit' };
       }
 
-      const delay = CONFIG.DELAY_BETWEEN_FOLLOWS.min + 
-                    Math.random() * (CONFIG.DELAY_BETWEEN_FOLLOWS.max - CONFIG.DELAY_BETWEEN_FOLLOWS.min);
+      // 3. Delays largos con Jitter variable
+      const baseDelay = CONFIG.DELAY_BETWEEN_FOLLOWS.min + 
+                        Math.random() * (CONFIG.DELAY_BETWEEN_FOLLOWS.max - CONFIG.DELAY_BETWEEN_FOLLOWS.min);
+      const delay = baseDelay + getRandomJitter();
       
       const delayMinutes = (delay / 60000).toFixed(1);
       
@@ -292,15 +305,24 @@
           return { success: true };
         }
       }
+
+      if (response.status === 429 || response.status === 400) {
+        logMessage(`🚫 Action restricted (Status ${response.status}). Stopping to avoid ban!`, 'error');
+        STATE.status = 'idle';
+        updateStatus('Restricted / Stopped', '#ef4444');
+        return { success: false, reason: 'rate_limited' };
+      }
       
       logMessage(`❌ Failed @${user.username} (Status: ${response.status})`, 'error');
       STATE.failed.push(user);
+      STATE.pendingToFollow = STATE.pendingToFollow.filter(u => u.id !== user.id);
       updateCounters();
       return { success: false, reason: 'api_error' };
       
     } catch (error) {
       logMessage(`⚠️ Error @${user.username}: ${error.message}`, 'error');
       STATE.failed.push(user);
+      STATE.pendingToFollow = STATE.pendingToFollow.filter(u => u.id !== user.id);
       updateCounters();
       return { success: false, reason: 'exception' };
     }
@@ -315,7 +337,7 @@
     }
 
     STATE.status = 'scanning';
-    STATE.currentQueryHashIndex = 0; // Resetear índice de hash
+    STATE.currentQueryHashIndex = 0;
     updateStatus('Scanning...', '#3b82f6');
     logMessage(`🎯 Scanning @${username}`, 'info');
     
@@ -324,6 +346,7 @@
     STATE.pendingToFollow = [];
     STATE.completed = [];
     STATE.failed = [];
+    STATE.skipped = [];
     
     const followers = await fetchFollowersDirect(username);
     
@@ -377,11 +400,15 @@
     while (STATE.pendingToFollow.length > 0 && STATE.status === 'following') {
       batchNumber++;
       
-      const batchSize = CONFIG.FOLLOW_BATCH_SIZE + 
-                       Math.floor(Math.random() * (CONFIG.BATCH_SIZE_VARIATION * 2 + 1)) - 
-                       CONFIG.BATCH_SIZE_VARIATION;
+      if (CONFIG.SHUFFLE_EVERY_BATCH) {
+        STATE.pendingToFollow = shuffleArray(STATE.pendingToFollow);
+      }
+
+      const calculatedBatchSize = CONFIG.FOLLOW_BATCH_SIZE + 
+                             Math.floor(Math.random() * (CONFIG.BATCH_SIZE_VARIATION * 2 + 1)) - 
+                             CONFIG.BATCH_SIZE_VARIATION;
       
-      const actualBatchSize = Math.max(1, Math.min(5, batchSize));
+      const actualBatchSize = Math.max(1, Math.min(5, calculatedBatchSize));
       const actualBatchSizeFinal = Math.min(actualBatchSize, STATE.pendingToFollow.length);
       
       const batch = STATE.pendingToFollow.slice(0, actualBatchSizeFinal);
@@ -390,17 +417,19 @@
       for (const user of batch) {
         if (STATE.status !== 'following') break;
         
-        await followUser(user);
+        const result = await followUser(user);
+        if (result.reason === 'rate_limited') break; // Detener ejecución si hay bloqueo
         
         updateUI({
           pending: STATE.pendingToFollow.length,
-          progress: Math.round((STATE.completed.length / STATE.scannedFollowers.length) * 100)
+          progress: Math.round(((STATE.completed.length + STATE.failed.length + STATE.skipped.length) / STATE.scannedFollowers.length) * 100)
         });
       }
       
       if (STATE.pendingToFollow.length > 0 && STATE.status === 'following') {
         const batchDelay = CONFIG.DELAY_BETWEEN_BATCHES.min + 
-                           Math.random() * (CONFIG.DELAY_BETWEEN_BATCHES.max - CONFIG.DELAY_BETWEEN_BATCHES.min);
+                           Math.random() * (CONFIG.DELAY_BETWEEN_BATCHES.max - CONFIG.DELAY_BETWEEN_BATCHES.min) +
+                           getRandomJitter();
         
         const batchDelayMinutes = Math.round(batchDelay / 60000);
         logMessage(`⏸️ Next batch in ${batchDelayMinutes}m`, 'info');
@@ -422,13 +451,13 @@
         
         await sleep(batchDelay);
         clearInterval(interval);
-        STATE.hourlyCounter = 0;
+        STATE.hourlyCounter = 0; // Reinicia contador por hora al cambiar de lote largo
       }
     }
     
     if (STATE.pendingToFollow.length === 0) {
       updateStatus('✅ Done!', '#22c55e');
-      logMessage(`🎉 Completed: ${STATE.completed.length} followed, ${STATE.failed.length} failed`, 'success');
+      logMessage(`🎉 Completed: ${STATE.completed.length} followed, ${STATE.skipped.length} skipped, ${STATE.failed.length} failed`, 'success');
       updateCounters();
     }
     STATE.status = 'idle';
@@ -452,7 +481,7 @@
     overlay.innerHTML = `
       <div style="margin-bottom: 15px;">
         <h3 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 16px;">🔄 Instagram Follower Bot</h3>
-        <div style="font-size: 11px; color: #9ca3af;">Anti-Crash Edition • Auto Hash Rotation</div>
+        <div style="font-size: 11px; color: #10b981;">Safe Edition • Ultra-Low Behavior Profile</div>
       </div>
       <div style="margin-bottom: 15px;">
         <div style="display: flex; gap: 10px;">
@@ -585,7 +614,7 @@
     }
     
     createUI();
-    logMessage('🔄 Instagram Follower Bot initialized', 'success');
+    logMessage('🔄 Instagram Follower Bot initialized (Safe Mode)', 'success');
     updateCounters();
   }
 
